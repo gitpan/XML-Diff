@@ -74,7 +74,7 @@ use constant PATCH   => 2;
 
 use vars qw($VERSION $DEBUG);
 
-$VERSION = "0.01";
+$VERSION = "0.02";
 
 =head1 PUBLIC METHODS
 
@@ -388,11 +388,11 @@ skip the next text node before starting the operation
 
 =over 4
 
-=item Does not handle Entity Tags
+=item * Does not handle any Node Types Other than Element, Attribute and Text
 
-=item Diffgram operations are not guaranteed to be atomic
+=item * Diffgram operations are not guaranteed to be atomic
 
-=item Delete Operations on Nodes between two Text nodes are not reversable
+=item * Delete Operations on Nodes between two Text nodes are not reversable
 
 =back
 
@@ -464,31 +464,55 @@ sub _buildTree {
   my $lookup   = shift;
   my $bSelf    = shift;
   my $position = shift || 0;
-
   my $signature;
   my $weight;
+
+#     XML_ELEMENT_NODE=           1,
+#     XML_ATTRIBUTE_NODE=         2,
+#     XML_TEXT_NODE=              3,
+#     XML_CDATA_SECTION_NODE=     4,
+#     XML_ENTITY_REF_NODE=        5,
+#     XML_ENTITY_NODE=            6,
+#     XML_PI_NODE=                7,
+#     XML_COMMENT_NODE=           8,
+#     XML_DOCUMENT_NODE=          9,
+#     XML_DOCUMENT_TYPE_NODE=     10,
+#     XML_DOCUMENT_FRAG_NODE=     11,
+#     XML_NOTATION_NODE=          12,
+#     XML_HTML_DOCUMENT_NODE=     13,
+#     XML_DTD_NODE=               14,
+#     XML_ELEMENT_DECL=           15,
+#     XML_ATTRIBUTE_DECL=         16,
+#     XML_ENTITY_DECL=            17,
+#     XML_NAMESPACE_DECL=         18,
+#     XML_XINCLUDE_START=         19,
+#     XML_XINCLUDE_END=           20
+
+  # currently we only look at Element and Text nodes (Attribute nodes
+  # we handle as a known sub-element of Element nodes)
+  next unless( $node->nodeType == 3 || $node->nodeType == 1 );
 
   # need to consider full, content and structure matches for better diffs
   # but that's for the future.. right now we just do structure
   if( $node->nodeType == 3 ) {
     # text node hashes are their text value
     $signature = 'TEXT';
-    #if( !$bSelf ) {
-      # we only care about weight for new doc
-      $weight = length($node->textContent());
-    #}
-  } else {
+
+    $weight = length($node->textContent());
+
+  } elsif( $node->nodeType == 1 ) {
     $signature = $node->nodeName();
     my $p;
     foreach my $child ( $node->childNodes() ) {
       $signature .= $self->_buildTree( $child, $lookup, $bSelf, $p );
       $p++;
     }
-    #if( $bSelf ) {
-      foreach my $attr ( $node->attributes() ) {
-        $weight += length($attr->name);
-      }
-    #}
+
+    #$self->_debug( $node->nodeType );
+    foreach my $attr ( $node->attributes() ) {
+      $weight += length($attr->nodeName);
+    }
+
   }
 
   my $md5 = Digest::MD5->new();
@@ -764,6 +788,10 @@ sub _markChanges {
   my $match_type;
   my $pid;
 
+  # currently we only look at Element and Text nodes (Attribute nodes
+  # we handle as a known sub-element of Element nodes)
+  next unless( $node->nodeType == 3 || $node->nodeType == 1 );
+
   #$self->_debug( "self: $bSelf" );
   if( $bSelf ) {
     $lookup     = $self->{old}->{lookup};
@@ -794,7 +822,15 @@ sub _markChanges {
     # we're in add/delete mode
     my $action;
 
-    my $clone   = $node->cloneNode();
+    my $clone;
+    if( $node->nodeType == 1 ) {
+      my $doc = ($bSelf)?'old':'new';
+      $clone = $self->{$doc}->{doc}->createElement( $node->nodeName );
+    } elsif( $node->nodeType == 3 ) {
+      $clone = $node->cloneNode();
+    }
+
+    #my $clone   = $node->cloneNode();
 
     if( $bSelf ) {
       $action     = DELETE;
@@ -814,8 +850,8 @@ sub _markChanges {
 
     if( $node->nodeType != 3 ) {
       foreach my $attr ( $node->attributes() ) {
-        next if( $attr->name eq 'xvcs:id' );
-        $clone->setAttribute($attr->name,$attr->value);
+        next if( $attr->nodeName eq 'xvcs:id' );
+        $clone->setAttribute($attr->nodeName,$attr->value);
       }
     }
 
@@ -879,9 +915,9 @@ sub _markChanges {
       }
 
       # compare attributes
-      my %new = map { $_->name() => $_->value } $match_node->attributes();
+      my %new = map { $_->nodeName() => $_->value } $match_node->attributes();
       foreach my $attr ( $node->attributes() ) {
-        my $name = $attr->name();
+        my $name = $attr->nodeName();
         my $value = $attr->value();
         if( $new{$name} ) {
           # got the attribute

@@ -1,6 +1,15 @@
 Revision history for Perl extension XML-Diff.
 
+
 0.01  Fri Apr 30 17:12:19 2004
 	- original version; created by h2xs 1.22 with options
 		-X XML-Diff
 
+0.02  Tue May  4 23:05:55 2004
+ - handle namespaced nodes in diffgram (i.e. xsl:template doesn't turn
+   into template anymore)
+ - handle namespaced attributes in diffgram (i.e. <foo bar:baz="1"/>
+   doesn't turn into <foo baz="1"/> anymore)
+ - added to Known Problems that Node Types other than Element, Attribute
+   and Text will likely crash the module. I.e. No Comments, PIs, etc.
+   with this revision (fix in the works)
