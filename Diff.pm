@@ -74,7 +74,7 @@ use constant PATCH   => 2;
 
 use vars qw($VERSION $DEBUG);
 
-$VERSION = "0.03";
+$VERSION = "0.04";
 
 =head1 PUBLIC METHODS
 
@@ -96,6 +96,10 @@ sub new {
              };
 
   bless($self,$pkg);
+
+  if( $XML::Diff::DEBUG ) {
+    require Data::Dumper;
+  }
 
   $self->{parser}->keep_blanks(0);
 
@@ -160,7 +164,7 @@ sub compare {
 
   $self->_debug( "-- Phase II: Compute Hashes & Weights  --" );
 
-  $self->_debug( "current ------" );
+  $self->_debug( "old ------" );
   $self->_buildTree($self->{old}->{root},$self->{old}->{lookup},1);
 
   $self->_debug( "new ------" );
@@ -168,22 +172,27 @@ sub compare {
 
   $self->_debug( "-- Phase III: Match by weight --" );
 
+  $self->_weightmatch(HARD_MATCH);
   $self->_weightmatch();
+
+  if( $XML::Diff::DEBUG ) {
+    $self->_debug( "   MATCH_STATS ---------------------------------" );
+    $self->_debug( "Hard Matches:      $self->{MATCH_COUNT}->{1}" );
+    $self->_debug( "Structure Matches: $self->{MATCH_COUNT}->{4}" );
+#    exit;
+  }
 
   $self->_debug( "-- Phase IV: Propagate Matchings by structure (unimplemented) --" );
 
   $self->_debug( "-- Phase V: Generate Diffgram --" );
 
-  if( $XML::Diff::DEBUG ) {
-    $self->_debug( "   SELF ---------------------------------" );
-    $self->_debug( $self->{old}->{root}->toString(1) );
-    $self->_debug();
-  }
-
   $self->_markChanges($self->{new}->{root});
   $self->_markChanges($self->{old}->{root},1);
 
   if( $XML::Diff::DEBUG ) {
+    $self->_debug( "   OLD ---------------------------------" );
+    $self->_debug( $self->{old}->{root}->toString(1) );
+    $self->_debug();
     $self->_debug( "\n   CMP ----------------------------------" );
     $self->_debug( $self->{new}->{root}->toString(1) );
     $self->_debug();
@@ -464,7 +473,7 @@ sub _buildTree {
   my $self     = shift;
   my $node     = shift;
   my $lookup   = shift;
-  my $bSelf    = shift;
+  my $old      = shift;
   my $position = shift || 0;
   my $signature;
   my $thumbprint;
@@ -482,14 +491,18 @@ sub _buildTree {
     #     XML_ELEMENT_NODE=           1,
     #     XML_ATTRIBUTE_NODE=         2,
     $signature = $node->nodeName();
+    $thumbprint = $signature;
     my $p;
     foreach my $child ( $node->childNodes() ) {
-      $signature .= $self->_buildTree( $child, $lookup, $bSelf, $p );
+      my($thumbprint2,$signature2) = $self->_buildTree( $child, $lookup, $old, $p );
+      $thumbprint .= $thumbprint2;
+      $signature  .= $signature2;
       $p++;
     }
 
-    foreach my $attr ( $node->attributes() ) {
+    foreach my $attr ( sort $node->attributes() ) {
       $weight += length($attr->nodeName);
+      $thumbprint .= $attr->nodeName();
     }
 
   } elsif( $nodeType == 3 ) {
@@ -497,21 +510,23 @@ sub _buildTree {
     #     XML_TEXT_NODE=              3,
     # text node hashes are their text value
     $signature = 'TEXT';
-    $thumbprint = $node->textContent();
+    $thumbprint = $signature.$node->textContent();
     $weight    = length($thumbprint);
 
   } elsif( $nodeType == 4 ) {
     #$self->_debug( "- cdata section -" );
     #     XML_CDATA_SECTION_NODE=     4,
     # cdata section
-    $signature = 'CDATA';
-    $weight    = length($node->textContent());
+    $signature  = 'CDATA';
+    $thumbprint = $signature.$node->textContent();
+    $weight     = length($thumbprint);
 
   } elsif( $nodeType == 7 ) {
     #$self->_debug( "- processing instruction -" );
     #     XML_PI_NODE=                7,
     # processing instruction
     $signature = 'PI';
+    $thumbprint = $signature;
     $weight    = 5;
 
   } elsif( $nodeType == 8 ) {
@@ -519,7 +534,9 @@ sub _buildTree {
     #     XML_COMMENT_NODE=           8,
     # comment node
     $signature = 'COMMENT';
-    $weight    = length($node->textContent());
+    $thumbprint = $signature.$node->textContent();
+    $weight     = length($thumbprint);
+
 
   } else {
     #$self->_debug( "- UNHANDLED NODE TYPE -" );
@@ -547,26 +564,38 @@ sub _buildTree {
   my $hash  = $md5->b64digest();
   my $node_id = $$node;
 
+  my $md5_2 = Digest::MD5->new();
+  $md5_2->add($thumbprint);
+  $thumbprint = $md5_2->b64digest();
   #$self->_debug( "$node_id\t$weight\t$hash" );
 
   my $id;
-  push(@{$lookup->{hash}->{$hash}},$node);
-  if( !$self->{_HARD_MATCH} && @{$lookup->{hash}->{$hash}} > 100 ) {
-    $self->{_HARD_MATCH} = 1;
-    $self->_debug( "need to consider hard match.." );
+  push(@{$lookup->{hash}->{$hash}->{$position}},$node);
+  if( !$lookup->{hash}->{$hash}->{max} || $lookup->{hash}->{$hash}->{max} <= $position ) {
+    $lookup->{hash}->{$hash}->{max} = $position;
   }
-  if( $bSelf ) {
+
+  #if( !$self->{_HARD_MATCH} && @{$lookup->{hash}->{$hash}} > 100 ) {
+  #  $self->{_HARD_MATCH} = 1;
+  #  $self->_debug( "need to consider hard match.." );
+  #}
+
+  if( $old ) {
     $id = ++$self->{ID};
     if( $nodeType == 1 ) {
       $node->setAttribute('xvcs:id',$id );
     }
     $lookup->{id}->{$id} = $node;
+    push(@{$lookup->{thumbprint}->{$thumbprint}->{$position}},$node);
+    if( !$lookup->{thumbprint}->{$thumbprint}->{max} || $lookup->{thumbprint}->{$thumbprint}->{max} <= $position ) {
+      $lookup->{thumbprint}->{$thumbprint}->{max} = $position;
+    }
   } else {
     $weight += length($signature);
   }
 
-  $lookup->{nodes}->{$node_id} = [$hash,$weight,$id,$position];
-  return $signature;
+  $lookup->{nodes}->{$node_id} = [$hash,$weight,$id,$position,$thumbprint];
+  return($thumbprint,$hash);
 }
 
 =pod
@@ -576,113 +605,170 @@ sub _buildTree {
 =cut
 # _________________________________________________________
 sub _weightmatch {
-  my $self  = shift;
+  my $self       = shift;
+  my $match_type = shift || STRUCTURE_MATCH;
   my @queue = ($self->{new}->{root});
   my $lookup    = $self->{old}->{lookup};
   my $newlookup = $self->{new}->{lookup};
   while ( my $node = shift @queue ) {
-    my($hash,$weight,$id,$position) = @{$newlookup->{nodes}->{$$node}};
-    $self->_debug( "$$node\t$weight\t".$node->nodeName()."\t$hash" );
+    my($hash,$weight,$id,$position,$thumbprint) = @{$newlookup->{nodes}->{$$node}};
+    if( $XML::Diff::DEBUG ) {
+      my $node_name = $node->nodeName() || '';
+      $self->_debug( "$$node\t$weight\t$node_name\t$hash" );
+    }
     if ( $newlookup->{match_type}->{$$node} ) {
       $self->_debug( "  already matched this node.. WTF!" );
       next;
     }
-    my $candidates = $lookup->{hash}->{$hash};
+    #my $hard_match = $lookup->{thumbprint}->{$thumbprint};
+    #if( $hard_match ) {
+    #  my $count = @$hard_match;
+    #  $self->_debug( "  got $count hard matches for $thumbprint" );
+    #  if( $count > 1 ) {
+    #    $self->_debug( $node->toString(1) );
+    #    exit;
+    #  }
+    #}
+    my $candidates;
+    if( $match_type == HARD_MATCH ) {
+      $candidates = $lookup->{thumbprint}->{$thumbprint};
+    } else {
+      $candidates = $lookup->{hash}->{$hash};
+    }
     my $candidate;
     if( $candidates ) {
-      if( defined $candidates->[1] ) {
-        # this is just a debugging if statement
-        $self->_debug( "  got multiple matches!" );
-      }
+
       # need to find the best candidate
       # first consider position in parent, so that we avoid moves
+
+      my $likely;
+      my $distance = 0;
+      my $max = $candidates->{max};
+      $self->_debug( "  max position => $max" );
+
+      while( !$likely ) {
+        my @likely;
+        my $forward = $position + $distance;
+        my $back    = $position - $distance;
+        $self->_debug( "  checking $forward and $back" );
+        my $check;
+        if( $forward != $back && $forward <= $max ) {
+          # first time we hit this loop forward and back are the same, so we don't
+          # want to pull the same set twice
+          # we also don't want to push beyond our bounds
+          $check++;
+
+          if( exists( $candidates->{$forward} ) ) {
+            # while we're looking at candidates, prune the ones already matched
+            my @l;
+            foreach my $node (@{$candidates->{$forward}}) {
+              # check that this node hasn't been matched already
+              if( $lookup->{nodes}->{$$node} &&
+                  $lookup->{nodes}->{$$node}->[0] ) {
+                push( @l, $node );
+              } else {
+                $self->_debug( "removing previously matched node from set" );
+              }
+            }
+            if( @l ) {
+              $candidates->{$forward} = \@l;
+              push( @likely, @l );
+            } else {
+              delete $candidates->{$forward};
+            }
+          }
+        }
+
+        if( $back >= 0 ) {
+          # once, we get into negative territory, we don't check
+
+          $check++;
+
+          if( exists( $candidates->{$back} ) ) {
+            # while we're looking at candidates, prune the ones already matched
+            my @l;
+            foreach my $node (@{$candidates->{$back}}) {
+              # check that this node hasn't been matched already
+              if( $lookup->{nodes}->{$$node} &&
+                  $lookup->{nodes}->{$$node}->[0] ) {
+                push( @l, $node );
+              } else {
+                $self->_debug( "removing previously matched node from set" );
+              }
+            }
+            if( @l ) {
+              $candidates->{$back} = \@l;
+              push( @likely, @l );
+            } else {
+              delete $candidates->{$back};
+            }
+          }
+        }
+
+        if( !$check ) {
+          $self->_debug( "we give up: ".join(',',keys %$candidates));
+          # neither forward nor back had possible matches, we are done trying
+          last;
+        }
+
+        # check if we end up with any likely set
+        if( @likely ) {
+          $likely = \@likely;
+        }
+
+        # ready for another round?
+        $distance++;
+      }
+
       # then consider closests weight as an approximation of content and/or
       # position in tree
 
-      # we're using the schwarzian transform for position, but not weight
-      # because most of the time we won't even consider weight..
-      # might think about using a dynamic schwartzian with a heuristic 
-      # of "after we encounter $x weight comparison, let's precompute, because
-      # more are likely to show
+      if( $likely ) {
+        my @likely = sort
+          {
+            return abs($lookup->{nodes}->{$$a}->[1]-$weight) <=> abs($lookup->{nodes}->{$$b}->[1]-$weight);
+          } @$likely;
 
-      my %schwartz_position;
-      foreach ( @$candidates ) {
-        $schwartz_position{$$_} = abs($lookup->{nodes}->{$$_}->[3] - $position);
-      }
-
-      my @candidates = sort
-         {
-           my $pa = $schwartz_position{$$a};#abs($ra->[3]-$position);
-           my $pb = $schwartz_position{$$b};#abs($rb->[3]-$position);
-           #$self->_debug( "  pos: $pa ?= $pb" );
-           if( $pa == $pb ) {
-             # if position matches, look at weight
-             my $wa = abs($lookup->{nodes}->{$$a}->[1]-$weight);
-             my $wb = abs($lookup->{nodes}->{$$b}->[1]-$weight);
-             #$self->_debug( "  wt: $wa ?= $wb" );
-             return $wa <=> $wb;
-           }
-           return $pa <=> $pb;
-        } @$candidates;
-
-      #if( $XML::Diff::DEBUG ) {
-      #  $self->_debug( "compare:" );
-      #  $self->_debug( Dumper($newlookup->{nodes}->{$$node}  ) );
-      #  $self->_debug( "candidates:" );
-      #  foreach (@candidates) {
-      #    my $r = $lookup->{nodes}->{$$_};
-      #    $self->_debug( Dumper($r) );
-      #  }
-      #}
-
-      # assign the sorted one back to the lookup, so we keep track of
-      # candidates we remove from consideration
-      $candidates = $lookup->{hash}->{$hash} = \@candidates;
-
-      if( $node->nodeType == 3 ) {
-        # if our comparison is among text nodes, let's go the extra mile and
-        # see if there is a direct match first
-        my $text = $node->textContent();
-        # generally speaking white-space is insignificant in XML, so at least
-        # for matching purposes, we want to consider it as such
-        $self->_debug( "comparing text nodes: $text" );
-        foreach my $c ( @$candidates ) {
-          my $compare = $c->textContent();
-          $compare =~ s/\s*$//;
-          $compare =~ s/^\s*//;
-          $self->_debug( " => $compare" );
-          if( $compare eq $text ) {
-            $candidate = $c;
-            $lookup->{nodes}->{$$candidate}->[0] = undef;
-            last;
+        if( $node->nodeType == 3 ) {
+          # if our comparison is among text nodes, let's go the extra mile and
+          # see if there is a direct match first
+          my $text = $node->textContent();
+          # generally speaking white-space is insignificant in XML, so at least
+          # for matching purposes, we want to consider it as such
+          $self->_debug( "comparing text nodes: $text" );
+          foreach my $c ( @likely ) {
+            my $compare = $c->textContent();
+            $compare =~ s/\s*$//;
+            $compare =~ s/^\s*//;
+            $self->_debug( " => $compare" );
+            if( $compare eq $text ) {
+              $candidate = $c;
+              $lookup->{nodes}->{$$candidate}->[0] = undef;
+              last;
+            }
           }
         }
-      }
 
-      while ( !$candidate ) {
-        # we use pop until we have criteria, so that we at least preserve order
-        $candidate = shift @$candidates;
-        # gotta catch the case of not having anything in the array
-        last unless( $candidate );
-        if( ! $lookup->{nodes}->{$$candidate} ||
-            ! $lookup->{nodes}->{$$candidate}->[0] ) {
-          # the node is no longer in the node set with a hashvalue,
-          # i.e. it's been matched already
-          $self->_debug( "  this candidate's already been matched" );
-          undef $candidate;
+        while ( !$candidate ) {
+          # we use pop until we have criteria, so that we at least preserve order
+          $candidate = shift @likely;
+          # gotta catch the case of not having anything in the array
+          last unless( $candidate );
+          if( ! $lookup->{nodes}->{$$candidate} ||
+              ! $lookup->{nodes}->{$$candidate}->[0] ) {
+            # the node is no longer in the node set with a hashvalue,
+            # i.e. it's been matched already
+            $self->_debug( "  WTF!! this candidate's already been matched" );
+            undef $candidate;
+          }
         }
-      }
-      # cleanup
-      if( !@$candidates ) {
-        # nothing left in candidate list, remove hash entry
-        delete $lookup->{hash}->{$hash};
       }
     }
 
     if( $candidate ) {
       # got a match on this subtree, need to remove the children from the set of
       # matchable nodes
-      $self->_propagateMatch( $node,$candidate );
+      $self->_propagateMatch( $node,$candidate, $match_type );
 
       # we will still have to check the nodes and children for
       # attribute and content changes
@@ -717,14 +803,16 @@ sub _weightmatch {
 =cut
 # _________________________________________________________
 sub _propagateMatch {
-  my $self = shift;
-  my $new  = shift;
-  my $old  = shift;
-  my $lookup    = $self->{old}->{lookup};
-  my $newlookup = $self->{new}->{lookup};
-  my $id        = $lookup->{nodes}->{$$old}->[2];
+  my $self       = shift;
+  my $new        = shift;
+  my $old        = shift;
+  my $match_type = shift;
+  my $lookup     = $self->{old}->{lookup};
+  my $newlookup  = $self->{new}->{lookup};
+  my $id         = $lookup->{nodes}->{$$old}->[2];
 
   $self->_debug( "  propagate xvcs:id: $id" );
+  $self->{MATCH_COUNT}->{$match_type}++;
 
   if( $old->nodeType == 3 ) {
     $self->_debug( $old->textContent." => ".$new->textContent );
@@ -732,9 +820,6 @@ sub _propagateMatch {
 
   if( $old->nodeType == 1 ) {
     $new->setAttribute('xvcs:id',$id);
-    $new->setAttribute('xvcs:match','STRUCTURE');
-    $old->setAttribute('xvcs:match','STRUCTURE');
-
   }
 
   # not sure if we need this guy
@@ -750,15 +835,15 @@ sub _propagateMatch {
   # register the nodes as matched so we know not to try to add/delete them
   # and we map the old to the new for later update/move analysis
   $lookup->{match}->{$$old}         = $new;
-  $lookup->{match_type}->{$$old}    = STRUCTURE_MATCH;
-  $newlookup->{match_type}->{$$new} = STRUCTURE_MATCH;
+  $lookup->{match_type}->{$$old}    = $match_type;#STRUCTURE_MATCH;
+  $newlookup->{match_type}->{$$new} = $match_type;#STRUCTURE_MATCH;
 
   # propagate to children
   my(@new) = $new->childNodes();
   my(@old) = $old->childNodes();
   while( my $cnew = shift @new ) {
     my $cold = shift @old;
-    $self->_propagateMatch( $cnew,$cold );
+    $self->_propagateMatch( $cnew,$cold,$match_type );
   }
 
   return 1;
@@ -794,8 +879,8 @@ sub _matchParents {
       $lookup->{match_type}->{$$oldparent}    = BRANCH_MATCH;
       $newlookup->{match_type}->{$$newparent} = BRANCH_MATCH;
 
-      $newparent->setAttribute('xvcs:match','BRANCH');
-      $oldparent->setAttribute('xvcs:match','BRANCH');
+      #$newparent->setAttribute('xvcs:match','BRANCH');
+      #$oldparent->setAttribute('xvcs:match','BRANCH');
 
       my $id = $lookup->{nodes}->{$$oldparent}->[2];
       #my $id = $oldparent->getAttribute('xvcs:id');
@@ -827,7 +912,7 @@ sub _matchParents {
 sub _markChanges {
   my $self       = shift;
   my $node       = shift;
-  my $bSelf      = shift;
+  my $old        = shift;
   my $parent     = shift;
   my $lookup;
   my $match_type;
@@ -837,8 +922,8 @@ sub _markChanges {
   # we handle as a known sub-element of Element nodes)
   next unless( $node->nodeType == 3 || $node->nodeType == 1 );
 
-  #$self->_debug( "self: $bSelf" );
-  if( $bSelf ) {
+  #$self->_debug( "old: $old" );
+  if( $old ) {
     $lookup     = $self->{old}->{lookup};
     $match_type = $lookup->{match_type}->{$$node};
   } else {
@@ -869,15 +954,13 @@ sub _markChanges {
 
     my $clone;
     if( $node->nodeType == 1 ) {
-      my $doc = ($bSelf)?'old':'new';
+      my $doc = ($old)?'old':'new';
       $clone = $self->{$doc}->{doc}->createElement( $node->nodeName );
     } elsif( $node->nodeType == 3 ) {
       $clone = $node->cloneNode();
     }
 
-    #my $clone   = $node->cloneNode();
-
-    if( $bSelf ) {
+    if( $old ) {
       $action     = DELETE;
     } else {
       $action     = INSERT;
@@ -887,10 +970,12 @@ sub _markChanges {
       if( $node->nodeType == 1 ) {
         $node->setAttribute('xvcs:id',$id );
       }
-
+      #$self->_debug( "$lookup->{id}->{$id} = $node" );
       $lookup->{id}->{$id} = $node;
+      #$self->_debug( "$lookup->{id}->{$id} = $node" );
       $lookup->{nodes}->{$$node}->[2] = $id;
       $self->_debug( "INSERT: $pid:$id" );
+      $lookup->{inserts}->{$$clone} = $id;
     }
 
     if( $node->nodeType == 1 ) {
@@ -911,7 +996,7 @@ sub _markChanges {
       $self->_registerChange($action,$pid,$diff,$id);
       $diff->appendChild( $clone );
     }
-  } elsif( $bSelf ) {
+  } elsif( $old ) {
     # we got a match_type, but we only care about matches, when we are
     # traversing our own tree
 
@@ -1010,7 +1095,7 @@ sub _markChanges {
   }
 
   foreach my $child ( $node->childNodes() ) {
-    $self->_markChanges( $child, $bSelf, $node );
+    $self->_markChanges( $child, $old, $node );
   }
 
 }
@@ -1078,12 +1163,14 @@ sub _processChange {
   # process deletes
   if( defined $ref->{actions}->[DELETE] ) {
     foreach my $rec ( reverse @{$ref->{actions}->[DELETE]} ) {
+      $self->_debug( "DELETE" );
       $self->_setDiff( $pid, @$rec );
     }
   }
 
   # process tree moves
   foreach my $rec ( @{$ref->{actions}->[TREE_MOVE]} ) {
+    $self->_debug( "TREE MOVE" );
     $self->_setDiff( $pid, @$rec );
   }
 
@@ -1091,12 +1178,14 @@ sub _processChange {
   # need to to an LCS diff on the present nodes.. This is a comparison
   # of the set as it looks post tree move and delete but pre inserts
   if( $ref->{actions}->[LOCAL_MOVE] ) {
+    $self->_debug( "LOCAL MOVE" );
     $self->_local_move( $pid );
   }
 
   # process inserts
   if( defined $ref->{actions}->[INSERT] ) {
     foreach my $rec ( reverse @{$ref->{actions}->[INSERT]} ) {
+      $self->_debug( "INSERT" );
       $self->_setDiff( $pid, @$rec );
     }
   }
@@ -1185,7 +1274,9 @@ sub _local_move {
       # nodes in there that we don't recognizing as existing yet
       my $destination_prior;
       my $start = $destination;
-      my $skip = 1;
+
+      $skip = 1;
+
       while(1) {
         $destination_prior = $start->previousSibling();
         # no node, we bail
@@ -1346,14 +1437,17 @@ sub _setDiff {
     }
   }
 
+  $self->_debug( "  attaching instructions" );
   $self->_attachInstructions( $diff, $node, $prior, $action, $id );
 
   if( $action == TREE_MOVE ) {
     # move's are special, they have to happen as two separate actions
     # so we can't just call the appropriate patch method and be done
+    $self->_debug( "  doing bind action of move" );
     $self->_applyMoveBind( $diff, $node_to_move );
   } else {
     # find the appropriate patch method and let it manipulate ourselves
+    $self->_debug( "  now apply our action" );
     $self->_applyAction( $action, $diff );
   }
 
@@ -1378,6 +1472,9 @@ sub _attachInstructions {
   if( $id ) {
     $diff->setAttribute('id',$id);
   }
+
+  $self->_debug( $self->{old}->{lookup}->{id}->{12} );
+  $self->_debug( $self->{old}->{lookup}->{id}->{13} );
 
   if( $prior ) {
     if( $action == INSERT ||
@@ -1415,6 +1512,10 @@ sub _attachInstructions {
   if( $id && defined $self->{change_registry}->{$id} ) {
     $self->_debug( "marking $id as done" );
     $self->{change_registry}->{$id}->[2] = undef;
+  }
+
+  if( $XML::Diff::DEBUG ) {
+    $self->_debug( "state ---\n".$self->{old}->{root}->toString(1)."\n" );
   }
 
   return 1;
@@ -1455,17 +1556,33 @@ sub _applyInsert {
 
   my $follows = $patch->getAttribute('follows');
   my $skip    = $patch->getAttribute('skip');
-  my($child)  = $patch->childNodes();
-  my $node    = $child->cloneNode(1);
+  my $before;
+  my $node ;
 
+  if( $self->{_MODE} == COMPARE ) {
+    # if we're calling this in the compare phase, we gotta do some node swapping
+    # on the patch since we use the nodes object IDs to do lookups on, i.e. the
+    # set attached to the diffgram is the physical one we have to insert, while
+    # the diffgram gest rewritten with a clone
+    ($node)   = $patch->childNodes();
+    my $clone = $node->cloneNode(1);
+    $patch->removeChild( $node );
+    $patch->appendChild( $clone );
+  } else {
+    # in the patch phase we don't have to play the above tricks and can insert
+    # a clone directly
+    my($child) = $patch->childNodes();
+    $node      = $child->cloneNode(1);
+  }
 
+  $self->_debug( $node->toString(1) );
   my $sibling;
   if( !$follows ) {
     my $parent_path = $patch->getAttribute('first-child-of');
     my($parent)  = $self->{old}->{root}->findnodes( $parent_path );
     return undef unless( defined $parent );
     $sibling = $parent->firstChild();
-    $self->_debug( "sibling: ".$sibling->toString(1) );
+    $self->_debug( "not follows - sibling: ".$sibling->toString(1) );
     if( !$sibling ) {
       $parent->appendChild( $node );
       return 1;
@@ -1477,8 +1594,7 @@ sub _applyInsert {
       }
     } else {
       # we really are the first child, so we need to do an insert before
-      $self->{old}->{root}->insertBefore( $node, $sibling );
-      return 1;
+      $before = 1;
     }
   } else {
     ($sibling) = $self->{old}->{root}->findnodes( $follows );
@@ -1496,26 +1612,53 @@ sub _applyInsert {
   my $n = $node->nodeName();
   my $s = $sibling->nodeName();
 
-  $self->_debug( "insert $n after $s" );
-  $sibling->parentNode->insertAfter( $node, $sibling );
+  if( $before ) {
+    $self->_debug( "first child, therefore insert before" );
+    $sibling->parentNode->insertBefore( $node, $sibling );
+  } else {
+    $self->_debug( "insert $n after $s" );
+    $sibling->parentNode->insertAfter( $node, $sibling );
+  }
 
   $self->_debug( "MODE: $self->{_MODE}" );
   if( $self->{_MODE} == COMPARE ) {
     # if we're applying in COMPARE node, we need to register this node
     # in our lookup
 
-    #$self->_debug( $patch->toString(1) );
+    $self->_debug( "patch:\n".$patch->toString(1) );
+    $self->_insertRegister( $node );
     # first get it's ID
-    my $id = $patch->getAttribute( 'id' );
+    #my $id = $patch->getAttribute( 'id' );
 
     # and now we need to put this node in the lookup
-    $self->{old}->{lookup}->{id}->{$id} = $node;
-    $self->{old}->{lookup}->{nodes}->{$$node} = [undef,undef,$id];
+    #$self->{old}->{lookup}->{id}->{$id} = $node;
+    #$self->{old}->{lookup}->{nodes}->{$$node} = [undef,undef,$id];
 
-    $self->_debug( "registering new node $id" );
+    #$self->_debug( "registering new node $id" );
   }
 
   return 1;
+}
+
+=pod
+
+=head2 _insertRegister
+
+=cut
+# _________________________________________________________
+sub _insertRegister {
+  my $self   = shift;
+  my $node   = shift;
+
+  my $id = $self->{new}->{lookup}->{inserts}->{$$node};
+
+  $self->{old}->{lookup}->{id}->{$id} = $node;
+  $self->{old}->{lookup}->{nodes}->{$$node} = [undef,undef,$id];
+
+  $self->_debug( "registering new node $id" );
+  foreach my $child ( $node->childNodes() ) {
+    $self->_insertRegister( $child );
+  }
 }
 
 =pod
@@ -1676,6 +1819,7 @@ sub _applyMoveUnbind {
 
   # remove node from tree, so that our Xpaths are expressed properly
   $node->unbindNode();
+  $self->_debug( "unbound:".$node->toString(1) );
 
   return $node;
 }
@@ -1779,7 +1923,7 @@ Arne Claassen <cpan@unixmechanix.com>
 
 =head1 VERSION
 
-0.03
+0.04
 
 =head1 COPYRIGHT
 

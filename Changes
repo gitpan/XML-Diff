@@ -21,3 +21,12 @@ Revision history for Perl extension XML-Diff.
  - basic handling of comment nodes, processing instructions and
    CDATA sections. Does not version them, but at least they don't
    break the diffgram now
+
+
+0.04   Sat May 29 15:12:20 PDT 2004
+ - new matching algorithm reigns in exponential growth of match time on
+   large sets of similar nodes, and speeds up matching about 30% overall
+ - added hard matching of nodes, attributes and content to get better 
+   diffgrams on XML with many nodes of similar structure
+ - fixed bug with inserts of subtrees that were targets of node moves
+ - added more tests to harness

@@ -5,9 +5,11 @@
 
 # change 'tests => 1' to 'tests => last_test_to_print';
 
-use Test::More tests => 35;
+use Test::More tests => 38;
+
 use XML::LibXML;
 use Algorithm::Diff qw(diff);
+
 BEGIN { use_ok('XML::Diff') };
 
 #########################
@@ -495,6 +497,58 @@ my $xml = {
 </a>
 },
                                            ],
+            'tree_move_with_local_insert_and_delete' => [
+                                            qq{
+<a>
+  <b/>
+  <c/>
+  <d>
+    <x>
+      <y/>
+    </x>
+    <z/>
+  </d>
+  <e/>
+</a>
+},
+                                            qq{
+<a>
+  <b>
+    <xy/>
+  </b>
+  <d/>
+  <c>
+    <x/>
+    <z/>
+  </c>
+  <e/>
+</a>
+},
+                                           ],
+           'update_null_attribute' => [
+                                       qq{
+<a>
+  <b zero="0" blank="">blah blah blah</b>
+</a>
+},
+                                          qq{
+<a>
+  <b zero="0" blank="">blah blah blah</b>
+</a>
+},
+                                         ],
+           'update_randomized_attribute' => [
+                                       qq{
+<a>
+  <b a="1" b="2" c="3"/>
+</a>
+},
+                                          qq{
+<a>
+  <b c="3" b="2" a="1"/>
+</a>
+},
+                                         ],
           };
 
 my $test_file1 = 't/xml/test1.xml';
@@ -536,6 +590,9 @@ test_xml( 'local_move_with_delete' );
 test_xml( 'tree_move_single_node' );
 test_xml( 'tree_move_subtree' );
 test_xml( 'tree_move_with_local_move' );
+test_xml( 'tree_move_with_local_insert_and_delete' );
+test_xml_no_change( 'update_null_attribute' );
+test_xml_no_change( 'update_randomized_attribute' );
 
 exit;
 
@@ -658,6 +715,23 @@ sub test_xml {
     $success = 1;
   }
   ok( $success, "testing diff case '$test_name'" );
+}
+
+sub test_xml_no_change {
+  my $test_name = shift;
+  my($old,$new) = @{$xml->{$test_name}};
+  my $diff      = XML::Diff->new();
+  my $diffgram  = $diff->compare(
+                                 -old      => $old,
+                                 -new      => $new,
+                                );
+  my $root = $diffgram->documentElement();
+  #print $root->toString(1),"\n";
+  my $success;
+  if( ! $root->hasChildNodes() ) {
+    $success = 1;
+  }
+  ok( $success, "testing null diff case '$test_name'" );
 }
 
 sub sort_attributes {
