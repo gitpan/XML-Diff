@@ -13,3 +13,11 @@ Revision history for Perl extension XML-Diff.
  - added to Known Problems that Node Types other than Element, Attribute
    and Text will likely crash the module. I.e. No Comments, PIs, etc.
    with this revision (fix in the works)
+
+0.03  Mon May 24 07:28:15 2004
+ - fixed bug with handling blank or 0 valued attributes
+ - fixed bug with nodePaths of inserts
+ - sped up node matching (still pending complete rewrite)
+ - basic handling of comment nodes, processing instructions and
+   CDATA sections. Does not version them, but at least they don't
+   break the diffgram now

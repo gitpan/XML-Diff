@@ -74,7 +74,7 @@ use constant PATCH   => 2;
 
 use vars qw($VERSION $DEBUG);
 
-$VERSION = "0.02";
+$VERSION = "0.03";
 
 =head1 PUBLIC METHODS
 
@@ -262,7 +262,7 @@ sub patch {
   # gotta find the nodes to be moved before we do any of the actual actions,
   # otherwise our xpath's are off
 
-  $self->_debug( "original:\n".$self->{old}->{doc}->toString(1) );
+  #$self->_debug( "original:\n".$self->{old}->{doc}->toString(1) );
   foreach my $patch ( $self->{diff}->{root}->childNodes ) {
     my $name = $patch->nodeName();
     $self->_debug( "applying:\n".$patch->toString(1) );
@@ -273,7 +273,7 @@ sub patch {
       /xvcs:move/   && do { $self->_applyMove( $patch ); last; };
       last;
     }
-    $self->_debug( "intermediate:\n".$self->{old}->{doc}->toString(1) );
+    #$self->_debug( "intermediate:\n".$self->{old}->{doc}->toString(1) );
   }
 
   my $return;
@@ -448,6 +448,8 @@ sub _getDoc {
     $self->{$type}->{root} = $self->{$type}->{doc}->documentElement();
   }
 
+  #$self->{$type}->{doc}->indexElements();
+
   return 1;
 
 }
@@ -465,42 +467,20 @@ sub _buildTree {
   my $bSelf    = shift;
   my $position = shift || 0;
   my $signature;
+  my $thumbprint;
   my $weight;
-
-#     XML_ELEMENT_NODE=           1,
-#     XML_ATTRIBUTE_NODE=         2,
-#     XML_TEXT_NODE=              3,
-#     XML_CDATA_SECTION_NODE=     4,
-#     XML_ENTITY_REF_NODE=        5,
-#     XML_ENTITY_NODE=            6,
-#     XML_PI_NODE=                7,
-#     XML_COMMENT_NODE=           8,
-#     XML_DOCUMENT_NODE=          9,
-#     XML_DOCUMENT_TYPE_NODE=     10,
-#     XML_DOCUMENT_FRAG_NODE=     11,
-#     XML_NOTATION_NODE=          12,
-#     XML_HTML_DOCUMENT_NODE=     13,
-#     XML_DTD_NODE=               14,
-#     XML_ELEMENT_DECL=           15,
-#     XML_ATTRIBUTE_DECL=         16,
-#     XML_ENTITY_DECL=            17,
-#     XML_NAMESPACE_DECL=         18,
-#     XML_XINCLUDE_START=         19,
-#     XML_XINCLUDE_END=           20
 
   # currently we only look at Element and Text nodes (Attribute nodes
   # we handle as a known sub-element of Element nodes)
-  next unless( $node->nodeType == 3 || $node->nodeType == 1 );
+  #next unless( $node->nodeType == 3 || $node->nodeType == 1 );
 
   # need to consider full, content and structure matches for better diffs
   # but that's for the future.. right now we just do structure
-  if( $node->nodeType == 3 ) {
-    # text node hashes are their text value
-    $signature = 'TEXT';
-
-    $weight = length($node->textContent());
-
-  } elsif( $node->nodeType == 1 ) {
+  my $nodeType = $node->nodeType;
+  if( $node->nodeType == 1 ) {
+    #$self->_debug( "- element node -" );
+    #     XML_ELEMENT_NODE=           1,
+    #     XML_ATTRIBUTE_NODE=         2,
     $signature = $node->nodeName();
     my $p;
     foreach my $child ( $node->childNodes() ) {
@@ -508,11 +488,58 @@ sub _buildTree {
       $p++;
     }
 
-    #$self->_debug( $node->nodeType );
     foreach my $attr ( $node->attributes() ) {
       $weight += length($attr->nodeName);
     }
 
+  } elsif( $nodeType == 3 ) {
+    #$self->_debug( "- text node -" );
+    #     XML_TEXT_NODE=              3,
+    # text node hashes are their text value
+    $signature = 'TEXT';
+    $thumbprint = $node->textContent();
+    $weight    = length($thumbprint);
+
+  } elsif( $nodeType == 4 ) {
+    #$self->_debug( "- cdata section -" );
+    #     XML_CDATA_SECTION_NODE=     4,
+    # cdata section
+    $signature = 'CDATA';
+    $weight    = length($node->textContent());
+
+  } elsif( $nodeType == 7 ) {
+    #$self->_debug( "- processing instruction -" );
+    #     XML_PI_NODE=                7,
+    # processing instruction
+    $signature = 'PI';
+    $weight    = 5;
+
+  } elsif( $nodeType == 8 ) {
+    #$self->_debug( "- comment node -" );
+    #     XML_COMMENT_NODE=           8,
+    # comment node
+    $signature = 'COMMENT';
+    $weight    = length($node->textContent());
+
+  } else {
+    #$self->_debug( "- UNHANDLED NODE TYPE -" );
+
+    # unhandled
+    #     XML_ENTITY_REF_NODE=        5,
+    #     XML_ENTITY_NODE=            6,
+    #     XML_DOCUMENT_NODE=          9,
+    #     XML_DOCUMENT_TYPE_NODE=     10,
+    #     XML_DOCUMENT_FRAG_NODE=     11,
+    #     XML_NOTATION_NODE=          12,
+    #     XML_HTML_DOCUMENT_NODE=     13,
+    #     XML_DTD_NODE=               14,
+    #     XML_ELEMENT_DECL=           15,
+    #     XML_ATTRIBUTE_DECL=         16,
+    #     XML_ENTITY_DECL=            17,
+    #     XML_NAMESPACE_DECL=         18,
+    #     XML_XINCLUDE_START=         19,
+    #     XML_XINCLUDE_END=           20
+    next;
   }
 
   my $md5 = Digest::MD5->new();
@@ -524,9 +551,13 @@ sub _buildTree {
 
   my $id;
   push(@{$lookup->{hash}->{$hash}},$node);
+  if( !$self->{_HARD_MATCH} && @{$lookup->{hash}->{$hash}} > 100 ) {
+    $self->{_HARD_MATCH} = 1;
+    $self->_debug( "need to consider hard match.." );
+  }
   if( $bSelf ) {
     $id = ++$self->{ID};
-    if( $node->nodeType != 3 ) {
+    if( $nodeType == 1 ) {
       $node->setAttribute('xvcs:id',$id );
     }
     $lookup->{id}->{$id} = $node;
@@ -567,21 +598,31 @@ sub _weightmatch {
       # first consider position in parent, so that we avoid moves
       # then consider closests weight as an approximation of content and/or
       # position in tree
+
+      # we're using the schwarzian transform for position, but not weight
+      # because most of the time we won't even consider weight..
+      # might think about using a dynamic schwartzian with a heuristic 
+      # of "after we encounter $x weight comparison, let's precompute, because
+      # more are likely to show
+
+      my %schwartz_position;
+      foreach ( @$candidates ) {
+        $schwartz_position{$$_} = abs($lookup->{nodes}->{$$_}->[3] - $position);
+      }
+
       my @candidates = sort
-        {
-          my $ra = $lookup->{nodes}->{$$a};
-          my $rb = $lookup->{nodes}->{$$b};
-          my $pa = abs($ra->[3]-$position);
-          my $pb = abs($rb->[3]-$position);
-          $self->_debug( "  pos: $pa ?= $pb" );
-          if( $pa == $pb ) {
-            # if position matches, look at weight
-            my $wa = abs($lookup->{nodes}->{$$a}->[1]-$weight);
-            my $wb = abs($lookup->{nodes}->{$$b}->[1]-$weight);
-            $self->_debug( "  wt: $wa ?= $wb" );
-            return $wa <=> $wb;
-          }
-            return $pa <=> $pb;
+         {
+           my $pa = $schwartz_position{$$a};#abs($ra->[3]-$position);
+           my $pb = $schwartz_position{$$b};#abs($rb->[3]-$position);
+           #$self->_debug( "  pos: $pa ?= $pb" );
+           if( $pa == $pb ) {
+             # if position matches, look at weight
+             my $wa = abs($lookup->{nodes}->{$$a}->[1]-$weight);
+             my $wb = abs($lookup->{nodes}->{$$b}->[1]-$weight);
+             #$self->_debug( "  wt: $wa ?= $wb" );
+             return $wa <=> $wb;
+           }
+           return $pa <=> $pb;
         } @$candidates;
 
       #if( $XML::Diff::DEBUG ) {
@@ -607,12 +648,13 @@ sub _weightmatch {
         $self->_debug( "comparing text nodes: $text" );
         foreach my $c ( @$candidates ) {
           my $compare = $c->textContent();
-          $compare =~ s/\s*$/$1/;
+          $compare =~ s/\s*$//;
           $compare =~ s/^\s*//;
           $self->_debug( " => $compare" );
           if( $compare eq $text ) {
             $candidate = $c;
             $lookup->{nodes}->{$$candidate}->[0] = undef;
+            last;
           }
         }
       }
@@ -688,7 +730,7 @@ sub _propagateMatch {
     $self->_debug( $old->textContent." => ".$new->textContent );
   }
 
-  if( $old->nodeType != 3 ) {
+  if( $old->nodeType == 1 ) {
     $new->setAttribute('xvcs:id',$id);
     $new->setAttribute('xvcs:match','STRUCTURE');
     $old->setAttribute('xvcs:match','STRUCTURE');
@@ -763,6 +805,9 @@ sub _matchParents {
       $newlookup->{nodes}->{$$newparent}->[2] = $id;
       $newparent->setAttribute('xvcs:id',$id);
 
+      # now do a lazy down matching of our children by position
+      #$self->_matchSiblings( $old, $new, PRIOR );
+      #$self->_matchSiblings( $old, $new, NEXT );
       $old = $oldparent;
       $new = $newparent;
     } else {
@@ -812,7 +857,7 @@ sub _markChanges {
   }
   # we got a special case, where our node is a match, but the parent is not
   # and our node is pure text. In this case the text gets lost since we
-  # don't to pure text node moves. To avoid this, we treat this matched text
+  # don't do pure text node moves. To avoid this, we treat this matched text
   # as non-matching
   if( $node->nodeType == 3 && $match_type && $p_clone ) {
     $match_type = undef;
@@ -839,7 +884,7 @@ sub _markChanges {
       my $id = ++$self->{ID};
 
       # do we really need to track this?
-      if( $node->nodeType != 3 ) {
+      if( $node->nodeType == 1 ) {
         $node->setAttribute('xvcs:id',$id );
       }
 
@@ -848,7 +893,7 @@ sub _markChanges {
       $self->_debug( "INSERT: $pid:$id" );
     }
 
-    if( $node->nodeType != 3 ) {
+    if( $node->nodeType == 1 ) {
       foreach my $attr ( $node->attributes() ) {
         next if( $attr->nodeName eq 'xvcs:id' );
         $clone->setAttribute($attr->nodeName,$attr->value);
@@ -884,7 +929,7 @@ sub _markChanges {
         $new->appendText( $match_node->textContent() );
         push(@update,$old,$new);
       }
-    } else {
+    } elsif( $node->nodeType == 1) {
       if( $parent && !$self->{old}->{lookup}->{match_type}->{$$parent} ) {
         # can only consider moves, if we have a parent
         # (is that a valid assumption, not just a most likely case assumption?)
@@ -919,7 +964,7 @@ sub _markChanges {
       foreach my $attr ( $node->attributes() ) {
         my $name = $attr->nodeName();
         my $value = $attr->value();
-        if( $new{$name} ) {
+        if( defined $new{$name} ) {
           # got the attribute
           if( $value eq $new{$name} ) {
             # same value too, leave it alone
@@ -1096,32 +1141,6 @@ sub _local_move {
                          DISCARD_A => sub { $move->{$l1[$_[0]]}->[0] = $_[0]; },
                          DISCARD_B => sub { $move->{$l2[$_[1]]}->[1] = $_[1]; },
                         } );
-    if( 0 ) {#$XML::Diff::DEBUG ) {
-      my $line;
-      foreach (@l1) {
-        my $node = $self->{old}->{lookup}->{id}->{$_};
-        my $name;
-        if( $node->nodeType == 3 ) {
-          $name = 'T';
-        } else {
-          $name = $node->nodeName
-        }
-        $line .= "$name ";
-      }
-      $self->_debug( $line );
-      $line = '';
-      foreach (@l2) {
-        my $node = $self->{new}->{lookup}->{id}->{$_};
-        my $name;
-        if( $node->nodeType == 3 ) {
-          $name = 'T';
-        } else {
-          $name = $node->nodeName
-        }
-        $line .= "$name ";
-      }
-      $self->_debug( $line );
-    }
 
     foreach my $id ( sort { $a <=> $b } keys %$move ) {
       my $m_ref = $move->{$id};
@@ -1144,13 +1163,19 @@ sub _local_move {
       # since we're adjusting the source tree, we can blindly ask for the
       # sources previous sibling
       my $source_prior = $source->previousSibling();
-      # but we do have to check if it's a text node or ourselves
-      if( defined $source_prior && $source_prior->nodeType == 3) {
-        # if it's a text node, make a node of it in the diff and start the
-        # loop over
-        $self->_debug( "source_prior is a text node" );
-        $source_diff->setAttribute('after-text',1);
-        $source_prior = $source_prior->previousSibling();
+      # but we do have to check if it's an element node
+      my $skip = 1;
+      while(1) {
+        if( defined $source_prior && $source_prior->nodeType != 1) {
+          # if it's not an element node, make a note of it in the diff and start the
+          # loop over
+          $self->_debug( "source_prior is not an element node" );
+          $source_diff->setAttribute('skip',$skip);
+          $skip++;
+          $source_prior = $source_prior->previousSibling();
+        } else {
+          last;
+        }
       }
 
       $self->_attachInstructions( $source_diff, $source, $source_prior, LOCAL_MOVE );
@@ -1160,7 +1185,7 @@ sub _local_move {
       # nodes in there that we don't recognizing as existing yet
       my $destination_prior;
       my $start = $destination;
-      my $after_text;
+      my $skip = 1;
       while(1) {
         $destination_prior = $start->previousSibling();
         # no node, we bail
@@ -1177,12 +1202,12 @@ sub _local_move {
         }
         # we get here, the prior was good, but we need to check if it's a text
         # node
-        if( $destination_prior->nodeType == 3) {
-          # if it's a text node, make a node of it in the diff and start the
+        if( $destination_prior->nodeType != 1) {
+          # if it's not an element node, make a note of it in the diff and start the
           # loop over
           $self->_debug( "prior was text, ignore it" );
-          $after_text++;
-          $diff->setAttribute('after-text',$after_text);
+          $diff->setAttribute('skip',$skip);
+          $skip++;
           $start = $destination_prior;
           next;
         }
@@ -1252,11 +1277,18 @@ sub _setDiff {
     $diff->appendChild( $source_diff );
     my $source_prior = $source->previousSibling();
     # we do have to check if it's a text node
-    if( defined $source_prior && $source_prior->nodeType == 3) {
-      # if it's a text node, make a note of it in the diff
-      $source_diff->setAttribute('after-text',1);
-      $source_prior = $source_prior->previousSibling();
+    my $skip = 1;
+    while(1) {
+      if( defined $source_prior && $source_prior->nodeType != 1 ) {
+        # if it's not an element node, make a note of it in the diff
+        $source_diff->setAttribute('skip',$skip);
+        $skip++;
+        $source_prior = $source_prior->previousSibling();
+      } else {
+        last;
+      }
     }
+
     $self->_attachInstructions( $source_diff, $source, $source_prior, $action );
     $node_to_move = $self->_applyMoveUnbind( $source_diff );
   }
@@ -1264,15 +1296,21 @@ sub _setDiff {
   if( $action == UPDATE || $action == DELETE ) {
     $node = $lookup->{id}->{$id};
     $prior = $node->previousSibling();
-    if( defined $prior && $prior->nodeType == 3) {
-      # if it's a text node, make a note of it in the diff
-      $diff->setAttribute('after-text',1);
-      $prior = $prior->previousSibling();
+    my $skip = 1;
+    while(1) {
+      if( defined $prior && $prior->nodeType != 1 ) {
+        # if it's not an element node, make a note of it in the diff
+        $diff->setAttribute('skip',$skip);
+        $skip++;
+        $prior = $prior->previousSibling();
+      } else {
+        last;
+      }
     }
   } else {
     # INSERTs and MOVE destinations still need to ignore nodes that
     # don't yet exist in the document being modified
-    my $after_text;
+    my $skip = 1;
     my $prior_action;
     $lookup = $self->{new}->{lookup};
     $node = $lookup->{id}->{$id};
@@ -1293,13 +1331,13 @@ sub _setDiff {
           next;
         }
       }
-      # we get here, the prior was good, but we need to check if it's a text
-      # node
-      if( $prior->nodeType == 3) {
-        # if it's a text node, make a node of it in the diff and start the
+      # we get here, the prior was good, but we need to check if it's
+      # an element node
+      if( $prior->nodeType != 1 ) {
+        # if it's not an element node, make a node of it in the diff and start the
         # loop over
-        $after_text++;
-        $diff->setAttribute('after-text',$after_text);
+        $diff->setAttribute('skip',$skip);
+        $skip++;
         $start = $prior;
         next;
       }
@@ -1416,7 +1454,7 @@ sub _applyInsert {
   $self->_debug( 'apply insert' );
 
   my $follows = $patch->getAttribute('follows');
-  my $text    = $patch->getAttribute('after-text');
+  my $skip    = $patch->getAttribute('skip');
   my($child)  = $patch->childNodes();
   my $node    = $child->cloneNode(1);
 
@@ -1427,12 +1465,16 @@ sub _applyInsert {
     my($parent)  = $self->{old}->{root}->findnodes( $parent_path );
     return undef unless( defined $parent );
     $sibling = $parent->firstChild();
+    $self->_debug( "sibling: ".$sibling->toString(1) );
     if( !$sibling ) {
       $parent->appendChild( $node );
       return 1;
-    } elsif( $patch->getAttribute('after-text') ) {
-      $sibling = $sibling->nextSibling();
-      return undef unless( defined $sibling );
+    } elsif( $skip ) {
+      for(my$i=1;$i<$skip;$i++) {
+        $self->_debug( '..skipping node' );
+        $sibling = $sibling->nextSibling();
+        return undef unless( defined $sibling );
+      }
     } else {
       # we really are the first child, so we need to do an insert before
       $self->{old}->{root}->insertBefore( $node, $sibling );
@@ -1440,17 +1482,22 @@ sub _applyInsert {
     }
   } else {
     ($sibling) = $self->{old}->{root}->findnodes( $follows );
+    $self->_debug( "sibling: ".$sibling->toString(1) );
     return undef unless( defined $sibling );
-    if( $patch->getAttribute('after-text') ) {
-      $sibling = $sibling->nextSibling();
-      return undef unless( defined $sibling );
+    if( $skip ) {
+      for(my$i=0;$i<$skip;$i++) {
+        $self->_debug( '..skipping node' );
+        $sibling = $sibling->nextSibling();
+        return undef unless( defined $sibling );
+      }
     }
   }
 
   my $n = $node->nodeName();
   my $s = $sibling->nodeName();
 
-  $self->{old}->{root}->insertAfter( $node, $sibling );
+  $self->_debug( "insert $n after $s" );
+  $sibling->parentNode->insertAfter( $node, $sibling );
 
   $self->_debug( "MODE: $self->{_MODE}" );
   if( $self->{_MODE} == COMPARE ) {
@@ -1484,7 +1531,7 @@ sub _applyUpdate {
   $self->_debug( 'apply update' );
 
   my $follows = $patch->getAttribute('follows');
-  my $text    = $patch->getAttribute('after-text');
+  my $text    = $patch->getAttribute('skip');
   my $node;
   if( !$follows ) {
     my $parent_path = $patch->getAttribute('first-child-of');
@@ -1497,7 +1544,7 @@ sub _applyUpdate {
     ($node) = $sibling->nextSibling();
   }
   return undef unless( defined $node );
-  if(  $patch->getAttribute('after-text') ) {
+  if(  $patch->getAttribute('skip') ) {
     $node = $node->nextSibling();
     return undef unless( defined $node );
   }
@@ -1544,7 +1591,7 @@ sub _applyDelete {
   $self->_debug( 'apply delete' );
 
   my $follows = $patch->getAttribute('follows');
-  my $text    = $patch->getAttribute('after-text');
+  my $text    = $patch->getAttribute('skip');
   my $node;
   if( !$follows ) {
     my $parent_path = $patch->getAttribute('first-child-of');
@@ -1557,7 +1604,7 @@ sub _applyDelete {
     ($node) = $sibling->nextSibling();
   }
   return undef unless( defined $node );
-  if(  $patch->getAttribute('after-text') ) {
+  if(  $patch->getAttribute('skip') ) {
     $node = $node->nextSibling();
     return undef unless( defined $node );
   }
@@ -1622,7 +1669,7 @@ sub _applyMoveUnbind {
 
   return undef unless( defined $node );
 
-  if( $source->getAttribute('after-text') ) {
+  if( $source->getAttribute('skip') ) {
     $node = $node->nextSibling();
     return undef unless( defined $node );
   }
@@ -1644,10 +1691,13 @@ sub _applyMoveBind {
   my $patch   = shift;
   my $node    = shift;
   my $follows = $patch->getAttribute('follows');
-  my $text    = $patch->getAttribute('after-text');
+  my $text    = $patch->getAttribute('skip');
   my $sibling;
 
   $self->_debug( '  move bind' );
+
+  $self->_debug( $patch->toString(1) );
+  $self->_debug( $node->toString(1) );
 
   my $n = $node->nodeName();
 
@@ -1729,7 +1779,7 @@ Arne Claassen <cpan@unixmechanix.com>
 
 =head1 VERSION
 
-0.01
+0.03
 
 =head1 COPYRIGHT
 

@@ -676,10 +676,10 @@ sub dig_sort {
     }
     my @attributes = $node->attributes();
     foreach (@attributes) {
-      $node->removeAttribute( $_->name );
+      $node->removeAttribute( $_->nodeName );
     }
-    foreach ( sort {$a->name cmp $b->name} @attributes ) {
-      $node->setAttribute( $_->name, $_->value );
+    foreach ( sort {$a->nodeName cmp $b->nodeName} @attributes ) {
+      $node->setAttribute( $_->nodeName, $_->value );
     }
   }
 }
