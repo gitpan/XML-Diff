@@ -74,7 +74,7 @@ use constant PATCH   => 2;
 
 use vars qw($VERSION $DEBUG);
 
-$VERSION = "0.04";
+$VERSION = "0.05";
 
 =head1 PUBLIC METHODS
 
@@ -500,7 +500,7 @@ sub _buildTree {
       $p++;
     }
 
-    foreach my $attr ( sort $node->attributes() ) {
+    foreach my $attr ( sort {$a->nodeName cmp $b->nodeName } $node->attributes() ) {
       $weight += length($attr->nodeName);
       $thumbprint .= $attr->nodeName();
     }
@@ -1919,15 +1919,19 @@ sub _debug {
 
 =head1 AUTHOR
 
-Arne Claassen <cpan@unixmechanix.com>
+Arne Claassen  <sdether@cpan.org>
+
+=head1 MAINTAINER
+
+Tim Meadowcroft  <timm@cpan.org>
 
 =head1 VERSION
 
-0.04
+0.05
 
 =head1 COPYRIGHT
 
-2004 Arne F. Claassen, UnixMechanix.com, All rights reserved.
+2004, 2007 Arne F. Claassen, All rights reserved.
 
 =cut
 

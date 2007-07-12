@@ -30,3 +30,8 @@ Revision history for Perl extension XML-Diff.
    diffgrams on XML with many nodes of similar structure
  - fixed bug with inserts of subtrees that were targets of node moves
  - added more tests to harness
+
+0.05   Tue Jul 10 09:11:04 2007
+ - fixed bug with matching attributes (now sorted on names)
+
+

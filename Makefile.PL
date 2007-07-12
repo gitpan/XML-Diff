@@ -11,5 +11,5 @@ WriteMakefile(
                                            },
               ($] >= 5.005 ?    ## Add these new keywords supported since 5.005
                (ABSTRACT => 'XML DOM-Tree based Diff & Patch Module',
-                AUTHOR     => 'Arne Claassen <cpan@unixmechanix.com>') : ()),
+                AUTHOR     => 'Arne Claassen <sdether@cpanorg>') : ()),
              );

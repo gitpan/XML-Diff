@@ -540,12 +540,12 @@ my $xml = {
            'update_randomized_attribute' => [
                                        qq{
 <a>
-  <b a="1" b="2" c="3"/>
+  <b a="1" bb="2" ccc="3"/>
 </a>
 },
                                           qq{
 <a>
-  <b c="3" b="2" a="1"/>
+  <b ccc="3" bb="2" a="1"/>
 </a>
 },
                                          ],
